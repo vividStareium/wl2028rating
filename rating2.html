@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>竞赛 Rating 管理系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --bg-color: #f4f6f9; --card-bg: #ffffff; --border-color: #e1e4e8; --text-primary: #2c3e50; --header-bg: #f8f9fa; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: var(--bg-color); color: var(--text-primary); padding: 20px; margin: 0; }
+        .container { max-width: 1280px; margin: 0 auto; }
+        .card { background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 10px; }
+        h1 { margin: 0; font-size: 1.5rem; color: #333; flex-grow: 1; }
+        
+        .btn { border: none; padding: 10px 15px; border-radius: 5px; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 5px; color: white; transition: opacity 0.2s; }
+        .btn:hover { opacity: 0.9; }
+        .btn-export { background-color: #28a745; }
+        .btn svg { width: 16px; height: 16px; fill: white; }
+
+        .chart-container { position: relative; height: 350px; width: 100%; }
+        .table-wrapper { overflow: auto; max-height: 75vh; border: 1px solid var(--border-color); border-radius: 4px; }
+        table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+        th, td { padding: 10px; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); text-align: center; white-space: nowrap; background: #fff; }
+        th { background-color: var(--header-bg); font-weight: 600; position: sticky; top: 0; z-index: 10; }
+        th:nth-child(1), td:nth-child(1) { position: sticky; left: 0; z-index: 11; border-right: 2px solid #ddd; }
+        th:nth-child(2), td:nth-child(2) { position: sticky; left: 40px; z-index: 11; border-right: 2px solid #ddd; }
+        th:nth-child(1), th:nth-child(2) { z-index: 20; }
+        
+        .user-newbie { color: #808080; font-weight: bold; }
+        .user-pupil { color: #008000; font-weight: bold; }
+        .user-specialist { color: #03a89e; font-weight: bold; }
+        .user-expert { color: #0000ff; font-weight: bold; }
+        .user-candidate-master { color: #aa00aa; font-weight: bold; }
+        .user-master { color: #ff8c00; font-weight: bold; }
+        .user-grandmaster { color: #ff0000; font-weight: bold; }
+        .user-legendary { color: #ff0000; font-weight: bold; }
+        .rating-val { font-family: "Consolas", monospace; font-size: 1.1em; }
+        .delta-pos { color: #008000; font-size: 0.85em; }
+        .delta-neg { color: #888; font-size: 0.85em; }
+        .delta-zero { color: #ccc; font-size: 0.85em; }
+        .rank-badge { background: #6c757d; color: #fff; padding: 2px 6px; border-radius: 10px; font-size: 0.75em; display: inline-block; }
+        .team-tag { background: #17a2b8; color: #fff; padding: 1px 4px; border-radius: 4px; font-size: 0.8em; margin-left: 3px; font-weight: normal; }
+
+        .inactive-row { opacity: 0.4; background-color: #fcfcfc; }
+        .inactive-row td { background-color: #fcfcfc; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card">
+        <div class="header-row">
+            <h1>Rating 统计看板</h1>
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <label style="cursor: pointer; font-size: 14px; color: #555; display: flex; align-items: center; gap: 5px; margin-right: 10px;">
+                    <input type="checkbox" id="toggleInactive" onchange="app.renderTable(); app.renderChart();">
+                    显示休眠选手
+                </label>
+                <button class="btn btn-export" onclick="exportToExcel()">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                    导出 Excel
+                </button>
+            </div>
+        </div>
+        <div class="chart-container">
+            <canvas id="ratingChart"></canvas>
+        </div>
+    </div>
+    <div class="card" style="padding:0; overflow:hidden">
+        <div class="table-wrapper" id="table-container">
+            <p style="text-align:center; padding: 20px">正在加载...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+const CONFIG = { INITIAL_RATING: 1500, ABSENT_PENALTY: 0 };
+
+const DEFAULT_CSV = `姓名,2025.12.17,2025.12.24,2025.12.31,2026.01.07,2026.01.14,2026.01.21,2026.01.28,2026.02.04,2026.02.11,2026.02.25,2026.03.04,2026.03.12,2026.03.18,2026.03.25,2026.04.08,2026.04.12,2026.04.15,2026.04.22,2026.04.29
+Mooos,1,1,3,1,2,4,1,-1,-1,-1,2,3,2,2,2-YADP (Yet Another Dumb PIG!),-1,2-YADP (Yet Another Dumb PIG!),3-YADP (Yet Another Dumb PIG!),4-Q_ *twpac0KACGZi+b1N9m0WsFYj9Ty...8!nDZ:.c7bHKaJI
+stars569,2,5,8,9,4,5,3,4,4,2,3,6,11,9,-1,-1,-1,-1,2
+qwsxza,2,3,2,12,1,2,-1,-1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,-1
+Jian132363,4,2,-1,6,5,12,-1,-1,5,3,4,4,4,7,3-Bloom Into You,1-Bloom Into You,3-Bloom Into You,-1,3
+Hanoko1314,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,5,-1,-1
+popomao,6,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+yrjzs,7,4,-1,7,17,8,-1,-1,6,-1,14,8,3,1,3-Bloom Into You,1-Bloom Into You,3-Bloom Into You,1-Bloom Into You,5-佬佬菜菜带带
+YuanYuXing,8,9,6,13,11,14,-1,13,-1,-1,-1,16,-1,17,-1,-1,-1,-1,-1
+kong_mda,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+miaodaojiale,10,6,-1,11,-1,13,-1,5,-1,-1,-1,18,8,20,6-wwwww,3-按住w开始思索,7-按住w开始思索,5-按住w开始思索,9
+wanglinqi,11,12,4,10,16,15,-1,10,7,-1,15,12,7,7,7-马头神了,2-马头神了,8-马头神了,6-马头神了,6
+xiancong,12,-1,-1,-1,12,-1,-1,-1,-1,-1,12,11,10,3,7-马头神了,2-马头神了,8-马头神了,6-马头神了,-1
+huo_fox,13,18,-1,15,-1,-1,-1,-1,-1,-1,-1,19,9,5,6-wwwww,3-按住w开始思索,7-按住w开始思索,5-按住w开始思索,7
+Chethday,14,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+htht69,15,20,9,-1,18,19,-1,14,11,4,10,17,16,16,-1,-1,-1,-1,-1
+fangxiaoxv,16,-1,7,14,9,16,5,9,-1,7,-1,23,13,11,-1,-1,-1,-1,-1
+Tristan0816,17,13,-1,-1,19,20,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+ast2333,18,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+syttt,19,16,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+verselet,21,8,5,16,10,18,-1,15,-1,-1,-1,-1,22,19,-1,-1,-1,-1,-1
+Young816,22,-1,-1,-1,21,23,-1,16,-1,8,11,20,19,-1,8-编译器说我队,4-编译器说我队,9-编译器说我队,7-编译器说我队,13
+Meursaul,23,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+SA_BER,24,17,-1,-1,14,21,-1,-1,-1,-1,13,25,12,13,-1,-1,-1,8-SA_BER,12
+LaoJeiBiez,25,21,-1,18,15,-1,-1,12,-1,-1,-1,21,17,18,8-编译器说我队,4-编译器说我队,9-编译器说我队,7-编译器说我队,-1
+pomeloxu,26,14,-1,17,8,17,-1,8,-1,-1,9,13,14,15,7-马头神了,2-马头神了,8-马头神了,6-马头神了,8
+hardfighter,27,-1,-1,-1,22,-1,-1,-1,-1,-1,-1,22,21,-1,-1,-1,-1,-1,-1
+1MeiYuan.,28,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+currry,29,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+Lv001,30,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+Xyl1206,31,7,-1,4,0,11,-1,7,8,6,-1,27,15,9,6-wwwww,3-按住w开始思索,7-按住w开始思索,5-按住w开始思索,10
+FXY_AC,0,10,1,2,3,7,0,-1,-1,-1,6,7,20,-1,5-OMG，also a PIG,-1,4-back to shame!,4-back to shame!,-1
+SerendipityZzz,0,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+Hanzzh,20,19,-1,19,20,22,-1,-1,12,9,-1,24,18,21,8-编译器说我队,4-编译器说我队,9-编译器说我队,7-编译器说我队,-1
+Silas_Li,0,0,0,3,13,10,-1,-1,-1,-1,-1,15,22,12,4-SOF,-1,6-hard copper,-1,-1
+Infinte_L,0,0,0,5,7,3,2,2,-1,-1,5,-1,-1,-1,4-SOF,-1,6-hard copper,-1,-1
+noir123,0,0,0,8,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,4-SOF,-1,-1,-1,-1
+crs_Illusion,0,0,0,0,6,1,-1,-1,-1,-1,-1,9,-1,-1,2-YADP (Yet Another Dumb PIG!),-1,2-YADP (Yet Another Dumb PIG!),-1,-1
+Bigarade,0,0,0,0,0,6,-1,3,2,-1,-1,5,5,6,2-YADP (Yet Another Dumb PIG!),-1,2-YADP (Yet Another Dumb PIG!),3-YADP (Yet Another Dumb PIG!),-1
+CyanHalcyon,0,0,0,0,0,9,-1,-1,9,-1,7,-1,-1,-1,-1,-1,-1,-1,-1
+six_ssp,0,0,0,0,0,0,4,6,3,-1,8,10,6,-1,-1,-1,-1,-1,11
+JerrySyr,0,0,0,0,0,0,0,1,1,1,1,2,1,4,1-1001,-1,1,2-1001,1
+tingshuo2917,0,0,0,0,0,0,0,11,10,5,-1,-1,-1,-1,-1,-1,-1,-1,-1
+zwu2022015167,0,0,0,0,0,0,0,0,0,0,0,14,-1,-1,5-OMG，also a PIG,-1,4-back to shame!,4-back to shame!,-1
+zwu2022015093,0,0,0,0,0,0,0,0,0,0,0,26,-1,-1,5-OMG，also a PIG,-1,4-back to shame!,-1,-1
+Nanshenger,0,0,0,0,0,0,0,0,0,0,0,0,0,14,-1,-1,-1,-1,-1
+vivid_stareium,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3-Bloom Into You,1-Bloom Into You,3-Bloom Into You,1-Bloom Into You,-1
+MoScenix,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1-1001,-1,-1,2-1001,-1
+Wesjitc,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,6-hard copper,-1,-1
+Misaki_Foracy_,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14`;
+
+class RatingCalculator {
+    static getEloWinProbability(ra, rb) { return 1.0 / (1 + Math.pow(10, (rb - ra) / 400.0)); }
+    static getSeed(entities, rating) {
+        let result = 1;
+        for (let other of entities) result += this.getEloWinProbability(other.rating, rating);
+        return result;
+    }
+    static getRatingToRank(entities, rank) {
+        let left = 1, right = 8000;
+        while (right - left > 1) {
+            const mid = Math.floor((left + right) / 2);
+            if (this.getSeed(entities, mid) < rank) right = mid; else left = mid;
+        }
+        return left;
+    }
+    static calculateDeltas(participants) {
+        if (participants.length === 0) return;
+
+        const teamMap = new Map();
+        for (let p of participants) {
+            if (!teamMap.has(p.teamId)) teamMap.set(p.teamId, []);
+            teamMap.get(p.teamId).push(p);
+        }
+
+        const teams = Array.from(teamMap.values()).map(members => {
+            let sumExp = 0;
+            for (let m of members) sumExp += Math.pow(10, m.rating / 800.0);
+            return {
+                members: members,
+                rating: 800 * Math.log10(sumExp),
+                rank: members[0].rank,
+                seed: 0, needRating: 0, delta: 0
+            };
+        });
+
+        for (let a of teams) {
+            a.seed = 1;
+            for (let b of teams) if (a !== b) a.seed += this.getEloWinProbability(b.rating, a.rating);
+        }
+
+        for (let t of teams) {
+            const midRank = Math.sqrt(t.rank * t.seed);
+            t.needRating = this.getRatingToRank(teams, midRank);
+            t.delta = Math.floor((t.needRating - t.rating) / 2);
+        }
+
+        teams.sort((a, b) => b.rating - a.rating);
+        let sum = 0; 
+        for (let t of teams) sum += t.delta;
+        const inc = Math.floor(-sum / teams.length);
+        for (let t of teams) t.delta += inc; 
+        
+        const CENTER = 1500; 
+        const K = 45000; 
+        for (let t of teams) {
+            const dist = CENTER - t.rating; 
+            const gravity = (dist * Math.abs(dist)) / K;
+            t.delta += Math.round(gravity);
+            
+            const allMemberNames = t.members.map(x => x.originalUser.name);
+            
+            for (let m of t.members) {
+                m.delta = t.delta;
+                m.teamRating = Math.round(t.rating);
+                m.seed = t.seed;
+                m.teammates = allMemberNames.filter(name => name !== m.originalUser.name);
+            }
+        }
+    }
+}
+
+class App {
+    constructor() {
+        this.users = [];
+        this.contestNames = [];
+        this.initData();
+        this.renderTable();
+        this.renderChart();
+    }
+
+    getRawData() { return DEFAULT_CSV; }
+
+    initData() {
+        this.users = [];
+        this.contestNames = [];
+        this.processData(this.getRawData());
+    }
+
+    processData(csvString) {
+        let normalized = csvString.replace(/\t/g, ',').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const rows = normalized.trim().split('\n').filter(r => r.trim());
+        if (rows.length < 1) return;
+
+        this.contestNames = rows[0].split(',').slice(1).map(s => s.trim());
+        
+        for (let i = 1; i < rows.length; i++) {
+            const cols = rows[i].split(',').map(s => s.trim());
+            if(cols.length < 2) continue;
+            
+            this.users.push({
+                name: cols[0],
+                currentRating: CONFIG.INITIAL_RATING,
+                ranks: cols.slice(1).map(val => {
+                    val = val.trim();
+                    if (val === '-1') return { rank: -1, teamId: null };
+                    if (val === '0' || val === '') return { rank: 0, teamId: null };
+                    
+                    const match = val.match(/^(\d+)(.*)$/);
+                    if (match) {
+                        const r = parseInt(match[1]);
+                        let tId = match[2].trim();
+                        if (tId.startsWith(':') || tId.startsWith('-') || tId.startsWith('_')) {
+                            tId = tId.substring(1).trim();
+                        }
+                        return { rank: r, teamId: tId ? tId : null };
+                    }
+                    return { rank: 0, teamId: null }; 
+                }),
+                history: [],
+                isActive: true,
+                currentAbsence: 0, 
+                participatedCount: 0 // 记录实际参赛场次
+            });
+        }
+        
+        this.contestNames.forEach((_, cIdx) => {
+            let parts = [], absentees = [];
+            
+            this.users.forEach(u => {
+                const rObj = u.ranks[cIdx];
+                if (rObj.rank > 0) {
+                    const tId = rObj.teamId || u.name;
+                    parts.push({ originalUser: u, rating: u.currentRating, rank: rObj.rank, teamId: tId, delta: 0 });
+                } else if (rObj.rank === -1) {
+                    absentees.push(u);
+                } else {
+                    u.history.push({ rating: u.currentRating, delta: 0, rank: 0, teamId: null });
+                }
+            });
+
+            RatingCalculator.calculateDeltas(parts);
+            
+            // 处理参赛选手 (应用复出倍率与新手定级倍率)
+            parts.forEach(p => {
+                let user = p.originalUser;
+                
+                // 1. 新手定级赛倍率逻辑
+                let newcomerMultiplier = 1.0;
+                if (user.participatedCount === 0) newcomerMultiplier = 2.0;      
+                else if (user.participatedCount === 1) newcomerMultiplier = 1.5; 
+                else if (user.participatedCount === 2) newcomerMultiplier = 1.3; 
+                else if (user.participatedCount === 3) newcomerMultiplier = 1.2; 
+                else if (user.participatedCount === 4) newcomerMultiplier = 1.1; 
+
+                // 2. 休眠复出倍率逻辑
+                let dormancyMultiplier = 1.0;
+                if (user.currentAbsence > 2) {
+                    if (user.currentAbsence >= 20) {
+                        dormancyMultiplier = 2.0; 
+                    } else {
+                        dormancyMultiplier = 1.0 + Math.pow(user.currentAbsence - 2, 2) / 324.0;
+                    }
+                }
+                
+                // 3. 综合倍率：取两者的较大值
+                let multiplier = Math.max(newcomerMultiplier, dormancyMultiplier);
+                
+                // 确定显示的倍率类型名
+                let mulType = '无';
+                if (multiplier > 1.0) {
+                    mulType = newcomerMultiplier >= dormancyMultiplier ? '新手定级' : '休眠复出';
+                }
+
+                // 最终 Delta 四舍五入
+                let finalDelta = Math.round(p.delta * multiplier);
+                user.currentRating += finalDelta;
+                
+                const displayTeam = (p.teamId === user.name) ? null : p.teamId;
+                
+                user.history.push({ 
+                    rating: user.currentRating, 
+                    delta: finalDelta, 
+                    rank: p.rank, 
+                    teamId: displayTeam,
+                    teamRating: p.teamRating,
+                    seed: p.seed,
+                    teammates: p.teammates,
+                    multiplierUsed: multiplier,
+                    mulType: mulType
+                });
+                
+                // 只要参赛，休眠计数器归零，参赛总场次 +1
+                user.currentAbsence = 0; 
+                user.participatedCount += 1;
+            });
+
+            // 处理缺席选手
+            absentees.forEach(u => {
+                u.currentRating += CONFIG.ABSENT_PENALTY;
+                u.currentAbsence += 1;
+                u.history.push({ rating: u.currentRating, delta: CONFIG.ABSENT_PENALTY, rank: -1, teamId: null });
+            });
+        });
+
+        this.users.forEach(u => {
+            let consecutiveAbsence = 0;
+            for (let i = u.ranks.length - 1; i >= 0; i--) {
+                if (u.ranks[i].rank <= 0) consecutiveAbsence++;
+                else break;
+            }
+            const hasParticipated = u.ranks.some(r => r.rank > 0);
+            u.isActive = hasParticipated && (consecutiveAbsence < 2);
+        });
+
+        this.users.sort((a, b) => {
+            if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+            return b.currentRating - a.currentRating;
+        });
+    }
+
+    getColorClass(r) {
+        if (r < 1200) return 'user-newbie';
+        if (r < 1400) return 'user-pupil';
+        if (r < 1600) return 'user-specialist';
+        if (r < 1900) return 'user-expert';
+        if (r < 2100) return 'user-candidate-master';
+        if (r < 2400) return 'user-master';
+        if (r < 3000) return 'user-grandmaster';
+        return 'user-legendary';
+    }
+
+    renderTable() {
+        const showInactive = document.getElementById('toggleInactive').checked;
+        let html = `<table id="rating-table-data"><thead><tr><th>排名</th><th>姓名</th><th>当前分</th>${this.contestNames.map(n => `<th>${n}</th>`).join('')}</tr></thead><tbody>`;
+        
+        let activeRank = 1;
+        this.users.forEach((u, idx) => {
+            if (!u.isActive && !showInactive) return;
+
+            const rankStr = u.isActive ? activeRank++ : '-';
+            const rowClass = u.isActive ? '' : 'inactive-row';
+            const nameSuffix = u.isActive ? '' : ' <span style="font-size:12px;color:#999;">(休眠)</span>';
+
+            html += `<tr class="${rowClass}">
+                <td>${rankStr}</td>
+                <td style="text-align:left"><span class="${this.getColorClass(u.currentRating)}">${u.name}</span>${nameSuffix}</td>
+                <td style="font-weight:bold; background-color:${u.isActive ? '#f8f9fa' : '#fcfcfc'};">${u.currentRating}</td>`;
+            
+            u.history.forEach(h => {
+                if (h.rank === -1) {
+                    const penaltyText = h.delta !== 0 ? ` <small>(${h.delta})</small>` : '';
+                    html += `<td><span style="color:#d9534f; font-size:0.9em;">缺席${penaltyText}</span></td>`;
+                } else if (h.rank === 0) {
+                    html += `<td><span class="delta-zero">-</span></td>`;
+                } else {
+                    const dClass = h.delta >= 0 ? 'delta-pos' : 'delta-neg';
+                    const sign = h.delta >= 0 ? '+' : '';
+                    const teamTagHtml = h.teamId ? `<span class="team-tag">${h.teamId}</span>` : '';
+                    
+                    let tooltip = `预计排名: ${h.seed ? h.seed.toFixed(2) : '-'}`;
+                    if (h.teamId) {
+                        tooltip += `\n等效 Rating: ${h.teamRating}`;
+                        tooltip += `\n队友: ${h.teammates && h.teammates.length > 0 ? h.teammates.join(', ') : '无'}`;
+                    }
+                    if (h.multiplierUsed && h.multiplierUsed > 1.0) {
+                        tooltip += `\n${h.mulType}倍率: ${h.multiplierUsed.toFixed(2)}x`;
+                    }
+
+                    html += `<td title="${tooltip}" style="cursor:help;">
+                        <span class="rank-badge">#${h.rank}</span>${teamTagHtml}<br>
+                        <span class="${this.getColorClass(h.rating)} rating-val">${h.rating}</span><br>
+                        <span class="${dClass}">(${sign}${h.delta})</span>
+                    </td>`;
+                }
+            });
+            html += `</tr>`;
+        });
+        html += `</tbody></table>`;
+        document.getElementById('table-container').innerHTML = html;
+    }
+
+    getDistinctColor(index, alpha = 1.0) {
+        const hue = (index * 137.508) % 360;
+        return `hsla(${hue}, 70%, 45%, ${alpha})`; 
+    }
+
+    renderChart() {
+        const showInactive = document.getElementById('toggleInactive').checked;
+        const ctx = document.getElementById('ratingChart').getContext('2d');
+        
+        const visibleUsers = showInactive ? this.users : this.users.filter(u => u.isActive);
+        
+        const datasets = visibleUsers.map((u, i) => {
+            const isTop3 = i < 3 && u.isActive;
+            const color = this.getDistinctColor(i, u.isActive ? 1.0 : 0.4); 
+            return {
+                label: u.name + (u.isActive ? '' : ' (休眠)'),
+                data: [CONFIG.INITIAL_RATING, ...u.history.map(h => h.rating)],
+                borderColor: color,
+                backgroundColor: color,
+                borderWidth: isTop3 ? 2.5 : (u.isActive ? 2 : 1),
+                borderDash: u.isActive ? [] : [5, 5],
+                hidden: !isTop3, 
+                tension: 0.3,
+                pointRadius: u.isActive ? 3 : 1, 
+                pointHoverRadius: 6,
+                hoverBorderWidth: 4,
+                hoverBorderColor: color,
+                order: i 
+            };
+        });
+
+        if (window.myChartInstance) window.myChartInstance.destroy();
+        window.myChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: { labels: ['初始', ...this.contestNames], datasets },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false, 
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'bottom', labels: { usePointStyle: true, padding: 15, boxWidth: 8, font: { size: 11 } } },
+                    tooltip: { mode: 'index', intersect: false, itemSort: (a, b) => b.raw - a.raw }
+                },
+                scales: { y: { grid: { color: '#f0f0f0' } }, x: { grid: { display: false } } }
+            }
+        });
+    }
+}
+
+const app = new App();
+
+function exportToExcel() {
+    const table = document.getElementById("rating-table-data");
+    if (!table) return;
+    const style = `<style>table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px;text-align:center;vertical-align:middle}th{background-color:#eee;font-weight:bold}.user-newbie{color:#808080;font-weight:bold}.user-pupil{color:#008000;font-weight:bold}.user-specialist{color:#03a89e;font-weight:bold}.user-expert{color:#0000ff;font-weight:bold}.user-candidate-master{color:#aa00aa;font-weight:bold}.user-master{color:#ff8c00;font-weight:bold}.user-grandmaster{color:#ff0000;font-weight:bold}.user-legendary{color:#ff0000;font-weight:bold}.delta-pos{color:#008000}.delta-neg{color:#888888}.delta-zero{color:#cccccc}.rank-badge{background-color:#666;color:#fff;border-radius:3px;padding:1px 3px;font-size:10px;mso-pattern:auto}.team-tag{color:#007bff;font-size:10px;}.inactive-row{color:#999;}</style>`;
+    const fullHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8">${style}</head><body>${table.outerHTML}</body></html>`;
+    const blob = new Blob([fullHtml], { type: "application/vnd.ms-excel" });
+    const downloadLink = document.createElement("a");
+    downloadLink.href = URL.createObjectURL(blob);
+    downloadLink.download = `Rating排名_${new Date().toISOString().slice(0,10)}.xls`;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+}
+</script>
+</body>
+</html>
