@@ -1,0 +1,51 @@
+:root { --bg-color:#f4f6f9; --card-bg:#fff; --border-color:#e1e4e8; --text-primary:#2c3e50; --header-bg:#f8f9fa; }
+* { box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; background:var(--bg-color); color:var(--text-primary); padding:20px; margin:0; }
+.container { max-width:1280px; margin:0 auto; }
+.top-nav { display:flex; gap:8px; margin-bottom:16px; }
+.nav-btn { border:1px solid #d0d7de; background:#fff; color:#34495e; padding:9px 16px; border-radius:7px; cursor:pointer; font-weight:600; }
+.nav-btn.active { background:#2f6feb; color:#fff; border-color:#2f6feb; }
+.page-section { display:none; }
+.page-section.active { display:block; }
+.card { background:var(--card-bg); padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,.05); margin-bottom:20px; }
+.table-card { padding:0; overflow:hidden; }
+.header-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; gap:10px; flex-wrap:wrap; }
+.header-row.compact { margin-bottom:8px; }
+h1 { margin:0; font-size:1.5rem; color:#333; flex-grow:1; }
+.toolbar { display:flex; gap:15px; align-items:center; flex-wrap:wrap; }
+.toggle-label { cursor:pointer; font-size:14px; color:#555; display:flex; align-items:center; gap:5px; margin-right:10px; }
+.btn { border:none; padding:10px 15px; border-radius:5px; font-size:14px; cursor:pointer; display:flex; align-items:center; gap:5px; color:white; transition:opacity .2s; }
+.btn:hover { opacity:.9; }
+.btn-export { background:#28a745; }
+.btn svg { width:16px; height:16px; fill:white; }
+.chart-container { position:relative; height:350px; width:100%; }
+.table-wrapper { overflow:auto; max-height:75vh; border:1px solid var(--border-color); border-radius:4px; }
+table { width:100%; border-collapse:separate; border-spacing:0; font-size:14px; }
+th,td { padding:10px; border-bottom:1px solid var(--border-color); border-right:1px solid var(--border-color); text-align:center; white-space:nowrap; background:#fff; }
+th { background:var(--header-bg); font-weight:600; position:sticky; top:0; z-index:10; }
+#rating-table-data th:nth-child(1), #rating-table-data td:nth-child(1) { position:sticky; left:0; z-index:11; border-right:2px solid #ddd; }
+#rating-table-data th:nth-child(2), #rating-table-data td:nth-child(2) { position:sticky; left:50px; z-index:11; border-right:2px solid #ddd; }
+#rating-table-data th:nth-child(1), #rating-table-data th:nth-child(2) { z-index:20; }
+.user-newbie { color:#808080; font-weight:bold; }
+.user-pupil { color:#008000; font-weight:bold; }
+.user-specialist { color:#03a89e; font-weight:bold; }
+.user-expert { color:#0000ff; font-weight:bold; }
+.user-candidate-master { color:#aa00aa; font-weight:bold; }
+.user-master { color:#ff8c00; font-weight:bold; }
+.user-grandmaster,.user-legendary { color:#ff0000; font-weight:bold; }
+.rating-val { font-family:Consolas,monospace; font-size:1.1em; }
+.delta-pos { color:#008000; font-size:.85em; }
+.delta-neg { color:#888; font-size:.85em; }
+.delta-zero { color:#ccc; font-size:.85em; }
+.rank-badge { background:#6c757d; color:#fff; padding:2px 6px; border-radius:10px; font-size:.75em; display:inline-block; }
+.team-tag { background:#17a2b8; color:#fff; padding:1px 4px; border-radius:4px; font-size:.8em; margin-left:3px; font-weight:normal; }
+.inactive-row { opacity:.48; }
+.inactive-row td { background:#fcfcfc; }
+.achievement-badge { display:inline-flex; align-items:center; justify-content:center; margin-left:5px; vertical-align:1px; font-size:15px; line-height:1; }
+.achievement-badge.silver-crown { filter:grayscale(1); opacity:.72; }
+.medal-rules { color:#667085; font-size:13px; line-height:1.7; margin-top:8px; }
+.medal-count { font-variant-numeric:tabular-nums; font-weight:700; }
+.medal-name { text-align:left; }
+.loading { text-align:center; padding:20px; color:#667085; }
+.load-error { margin-bottom:16px; padding:12px 14px; border:1px solid #f1aeb5; background:#fff5f5; color:#842029; border-radius:6px; line-height:1.6; }
+@media (max-width:720px) { body{padding:10px}.card{padding:14px}.table-card{padding:0}.header-row{align-items:flex-start}.chart-container{height:300px} }
