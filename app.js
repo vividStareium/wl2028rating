@@ -2,10 +2,12 @@ const CONFIG = {
     INITIAL_RATING: 1500,
     ABSENT_PENALTY: 0,
     DATA_URL: 'data/ratings.csv',
-    GOLD_CROWN_MIN_PARTICIPANTS: 20,
+    GOLD_CROWN_WINDOW: 20,
+    GOLD_CROWN_TOP_COUNT: 3,
     GOLD_MEDAL_RATIO: 0.10,
     SILVER_MEDAL_RATIO: 0.30,
-    BRONZE_MEDAL_RATIO: 0.60
+    BRONZE_MEDAL_RATIO: 0.60,
+    COMPETITOR_WEIGHTS: [5, 4, 3, 2, 1]
 };
 
 class RatingCalculator {
@@ -23,18 +25,33 @@ class RatingCalculator {
         }
         return left;
     }
-    static calculateDeltas(participants) {
-        if (participants.length === 0) return;
+    static getTeamRating(members) {
+        let sumExp = 0;
+        for (const member of members) sumExp += Math.pow(10, member.rating / 800.0);
+        return 800 * Math.log10(sumExp);
+    }
+    static getTeamSizeBonus(teamSize) {
+        return 800 * Math.log10(teamSize);
+    }
+    static groupTeams(participants) {
         const teamMap = new Map();
         for (const p of participants) {
             if (!teamMap.has(p.teamId)) teamMap.set(p.teamId, []);
             teamMap.get(p.teamId).push(p);
         }
-        const teams = Array.from(teamMap.values()).map(members => {
-            let sumExp = 0;
-            for (const m of members) sumExp += Math.pow(10, m.rating / 800.0);
-            return { members, rating:800 * Math.log10(sumExp), rank:members[0].rank, seed:0, needRating:0, delta:0 };
-        });
+        return Array.from(teamMap.entries()).map(([teamId, members]) => ({
+            teamId,
+            members,
+            rating:this.getTeamRating(members),
+            rank:members[0].rank,
+            seed:0,
+            needRating:0,
+            delta:0
+        }));
+    }
+    static calculateDeltas(participants) {
+        if (participants.length === 0) return;
+        const teams = this.groupTeams(participants);
         for (const a of teams) {
             a.seed = 1;
             for (const b of teams) if (a !== b) a.seed += this.getEloWinProbability(b.rating, a.rating);
@@ -69,6 +86,7 @@ class App {
         this.users = [];
         this.contestNames = [];
         this.contestParticipantCounts = [];
+        this.contestStats = [];
         window.addEventListener('hashchange', () => this.syncPageFromHash());
     }
 
@@ -112,8 +130,82 @@ class App {
         return { rank, teamId:teamId || null };
     }
 
+    getMedian(values) {
+        if (!values.length) return 0;
+        const sorted = [...values].sort((a,b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    buildContestStats(parts) {
+        const teams = RatingCalculator.groupTeams(parts);
+        const commonTeamBonus = this.getMedian(
+            teams.map(team => RatingCalculator.getTeamSizeBonus(team.members.length))
+        );
+
+        const normalizedTeams = teams.map(team => ({
+            teamId:team.teamId,
+            rank:team.rank,
+            rawTeamRating:team.rating,
+            adjustedTeamRating:team.rating - commonTeamBonus,
+            members:team.members.map(member => member.originalUser.name)
+        }));
+
+        const winnerTeams = normalizedTeams.filter(team => team.rank === 1);
+        const topCompetitors = normalizedTeams
+            .filter(team => team.rank !== 1)
+            .sort((a,b) => b.adjustedTeamRating - a.adjustedTeamRating)
+            .slice(0, CONFIG.COMPETITOR_WEIGHTS.length);
+
+        let weightedSum = 0;
+        let weightSum = 0;
+        topCompetitors.forEach((team, index) => {
+            const weight = CONFIG.COMPETITOR_WEIGHTS[index];
+            weightedSum += team.adjustedTeamRating * weight;
+            weightSum += weight;
+        });
+
+        return {
+            participantCount:parts.length,
+            teamCount:teams.length,
+            competitionStrength:weightSum ? weightedSum / weightSum : 0,
+            goldCrownThreshold:null,
+            isGoldCrown:false,
+            commonTeamBonus,
+            winnerTeams,
+            topCompetitors
+        };
+    }
+
+    getGoldCrownThreshold(stats) {
+        const strengths = stats
+            .map(stat => stat.competitionStrength)
+            .filter(Number.isFinite)
+            .sort((a,b) => b - a);
+        if (!strengths.length) return Infinity;
+        return strengths[Math.min(CONFIG.GOLD_CROWN_TOP_COUNT - 1, strengths.length - 1)];
+    }
+
+    finalizeGoldCrownThresholds() {
+        if (!this.contestStats.length) return;
+        const initialWindowSize = Math.min(CONFIG.GOLD_CROWN_WINDOW, this.contestStats.length);
+        const initialThreshold = this.getGoldCrownThreshold(this.contestStats.slice(0, initialWindowSize));
+
+        this.contestStats.forEach((stat, cIdx) => {
+            const referenceStats = cIdx < CONFIG.GOLD_CROWN_WINDOW
+                ? this.contestStats.slice(0, initialWindowSize)
+                : this.contestStats.slice(cIdx - CONFIG.GOLD_CROWN_WINDOW, cIdx);
+            const threshold = cIdx < CONFIG.GOLD_CROWN_WINDOW
+                ? initialThreshold
+                : this.getGoldCrownThreshold(referenceStats);
+            stat.goldCrownThreshold = threshold;
+            stat.isGoldCrown = Number.isFinite(threshold) && stat.competitionStrength >= threshold;
+        });
+    }
+
     processData(csvString) {
         this.users = [];
+        this.contestStats = [];
         const normalized = csvString.replace(/\t/g, ',').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         const rows = normalized.trim().split('\n').filter(r => r.trim()).map(row => row.split(',').map(v => v.trim()));
         if (!rows.length) throw new Error('ratings.csv 为空');
@@ -132,10 +224,6 @@ class App {
             });
         }
 
-        this.contestParticipantCounts = this.contestNames.map((_, cIdx) =>
-            this.users.reduce((count, user) => count + (user.ranks[cIdx].rank > 0 ? 1 : 0), 0)
-        );
-
         this.contestNames.forEach((_, cIdx) => {
             const parts = [], absentees = [];
             for (const user of this.users) {
@@ -148,6 +236,9 @@ class App {
                     user.history.push({ rating:user.currentRating, delta:0, rank:0, teamId:null });
                 }
             }
+
+            // 金冠强度只使用比赛开始前 Rating；不要移动到 Rating 更新之后。
+            this.contestStats.push(this.buildContestStats(parts));
 
             RatingCalculator.calculateDeltas(parts);
             for (const p of parts) {
@@ -184,6 +275,9 @@ class App {
             }
         });
 
+        this.contestParticipantCounts = this.contestStats.map(stat => stat.participantCount);
+        this.finalizeGoldCrownThresholds();
+
         for (const user of this.users) {
             let consecutiveAbsence = 0;
             for (let i=user.ranks.length - 1; i>=0; i--) {
@@ -197,7 +291,8 @@ class App {
     calculateAwards() {
         for (const user of this.users) user.awards = { goldCrown:0, silverCrown:0, goldMedal:0, silverMedal:0, bronzeMedal:0 };
         this.contestNames.forEach((_, cIdx) => {
-            const n = this.contestParticipantCounts[cIdx];
+            const stat = this.contestStats[cIdx];
+            const n = stat ? stat.teamCount : 0;
             if (!n) return;
             const goldLine = Math.ceil(n * CONFIG.GOLD_MEDAL_RATIO);
             const silverLine = Math.ceil(n * CONFIG.SILVER_MEDAL_RATIO);
@@ -206,7 +301,7 @@ class App {
                 const rank = user.ranks[cIdx].rank;
                 if (rank <= 0) continue;
                 if (rank === 1) {
-                    if (n >= CONFIG.GOLD_CROWN_MIN_PARTICIPANTS) user.awards.goldCrown++;
+                    if (stat.isGoldCrown) user.awards.goldCrown++;
                     else user.awards.silverCrown++;
                 } else if (rank <= goldLine) user.awards.goldMedal++;
                 else if (rank <= silverLine) user.awards.silverMedal++;
@@ -241,30 +336,58 @@ class App {
 
     renderTable() {
         const visibleUsers = this.getVisibleUsers();
-        let html = `<table id="rating-table-data"><thead><tr><th>排名</th><th>姓名</th><th>当前分</th>${this.contestNames.map(n => `<th>${n}</th>`).join('')}</tr></thead><tbody>`;
+        const contestHeaders = this.contestNames.map((name, cIdx) => {
+            const stat = this.contestStats[cIdx];
+            const strengthText = stat ? stat.competitionStrength.toFixed(1) : '-';
+            const isGoldCrown = Boolean(stat && stat.isGoldCrown);
+            const thresholdText = stat && Number.isFinite(stat.goldCrownThreshold)
+                ? stat.goldCrownThreshold.toFixed(1)
+                : '-';
+            const tooltip = (isGoldCrown ? '金冠局&#10;' : '')
+                + '争冠强度：' + strengthText
+                + '&#10;当场金冠门槛：' + thresholdText;
+            const crown = isGoldCrown ? '<span class="contest-crown" aria-label="金冠局">👑</span>' : '';
+            const crownClass = isGoldCrown ? ' gold-crown-column gold-crown-header' : '';
+            return '<th class="contest-header' + crownClass + '" title="' + tooltip + '">'
+                + '<div class="contest-header-main"><span>' + name + '</span>' + crown + '</div>'
+                + '<div class="contest-strength">强度 ' + strengthText + '</div></th>';
+        }).join('');
+        let html = '<table id="rating-table-data"><thead><tr><th>排名</th><th>姓名</th><th>当前分</th>'
+            + contestHeaders + '</tr></thead><tbody>';
         visibleUsers.forEach((user, idx) => {
             const rowClass = user.isActive ? '' : 'inactive-row';
             const inactiveSuffix = user.isActive ? '' : ' <span style="font-size:12px;color:#999;">(休眠)</span>';
-            html += `<tr class="${rowClass}"><td>${idx + 1}</td><td style="text-align:left"><span class="${this.getColorClass(user.currentRating)}">${user.name}</span>${this.getNameAchievement(user)}${inactiveSuffix}</td><td style="font-weight:bold;background:${user.isActive ? '#f8f9fa' : '#fcfcfc'};">${user.currentRating}</td>`;
-            for (const h of user.history) {
+            html += '<tr class="' + rowClass + '"><td>' + (idx + 1) + '</td><td style="text-align:left"><span class="'
+                + this.getColorClass(user.currentRating) + '">' + user.name + '</span>'
+                + this.getNameAchievement(user) + inactiveSuffix
+                + '</td><td style="font-weight:bold;background:' + (user.isActive ? '#f8f9fa' : '#fcfcfc') + ';">'
+                + user.currentRating + '</td>';
+            user.history.forEach((h, cIdx) => {
+                const crownClass = this.contestStats[cIdx] && this.contestStats[cIdx].isGoldCrown
+                    ? ' class="gold-crown-column"'
+                    : '';
                 if (h.rank === -1) {
-                    const penaltyText = h.delta !== 0 ? ` <small>(${h.delta})</small>` : '';
-                    html += `<td><span style="color:#d9534f;font-size:.9em;">缺席${penaltyText}</span></td>`;
+                    const penaltyText = h.delta !== 0 ? ' <small>(' + h.delta + ')</small>' : '';
+                    html += '<td' + crownClass + '><span style="color:#d9534f;font-size:.9em;">缺席'
+                        + penaltyText + '</span></td>';
                 } else if (h.rank === 0) {
-                    html += '<td><span class="delta-zero">-</span></td>';
+                    html += '<td' + crownClass + '><span class="delta-zero">-</span></td>';
                 } else {
                     const dClass = h.delta >= 0 ? 'delta-pos' : 'delta-neg';
                     const sign = h.delta >= 0 ? '+' : '';
-                    const teamTag = h.teamId ? `<span class="team-tag">${h.teamId}</span>` : '';
-                    let tooltip = `预计排名: ${h.seed ? h.seed.toFixed(2) : '-'}`;
+                    const teamTag = h.teamId ? '<span class="team-tag">' + h.teamId + '</span>' : '';
+                    let tooltip = '预计排名: ' + (h.seed ? h.seed.toFixed(2) : '-');
                     if (h.teamId) {
-                        tooltip += `\n等效 Rating: ${h.teamRating}`;
-                        tooltip += `\n队友: ${h.teammates && h.teammates.length ? h.teammates.join(', ') : '无'}`;
+                        tooltip += '\n等效 Rating: ' + h.teamRating;
+                        tooltip += '\n队友: ' + (h.teammates && h.teammates.length ? h.teammates.join(', ') : '无');
                     }
-                    if (h.multiplierUsed > 1.0) tooltip += `\n${h.mulType}倍率: ${h.multiplierUsed.toFixed(2)}x`;
-                    html += `<td title="${tooltip}" style="cursor:help;"><span class="rank-badge">#${h.rank}</span>${teamTag}<br><span class="${this.getColorClass(h.rating)} rating-val">${h.rating}</span><br><span class="${dClass}">(${sign}${h.delta})</span></td>`;
+                    if (h.multiplierUsed > 1.0) tooltip += '\n' + h.mulType + '倍率: ' + h.multiplierUsed.toFixed(2) + 'x';
+                    html += '<td' + crownClass + ' title="' + tooltip + '" style="cursor:help;">'
+                        + '<span class="rank-badge">#' + h.rank + '</span>' + teamTag + '<br>'
+                        + '<span class="' + this.getColorClass(h.rating) + ' rating-val">' + h.rating + '</span><br>'
+                        + '<span class="' + dClass + '">(' + sign + h.delta + ')</span></td>';
                 }
-            }
+            });
             html += '</tr>';
         });
         document.getElementById('table-container').innerHTML = html + '</tbody></table>';
@@ -326,7 +449,7 @@ class App {
 function exportToExcel() {
     const table = document.getElementById('rating-table-data');
     if (!table) return;
-    const style = `<style>table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px;text-align:center;vertical-align:middle}th{background:#eee;font-weight:bold}.user-newbie{color:#808080;font-weight:bold}.user-pupil{color:#008000;font-weight:bold}.user-specialist{color:#03a89e;font-weight:bold}.user-expert{color:#0000ff;font-weight:bold}.user-candidate-master{color:#aa00aa;font-weight:bold}.user-master{color:#ff8c00;font-weight:bold}.user-grandmaster,.user-legendary{color:#ff0000;font-weight:bold}.delta-pos{color:#008000}.delta-neg{color:#888}.delta-zero{color:#ccc}.rank-badge{background:#666;color:#fff;border-radius:3px;padding:1px 3px;font-size:10px}.team-tag{color:#007bff;font-size:10px}.inactive-row{color:#999}</style>`;
+    const style = `<style>table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px;text-align:center;vertical-align:middle}th{background:#eee;font-weight:bold}.user-newbie{color:#808080;font-weight:bold}.user-pupil{color:#008000;font-weight:bold}.user-specialist{color:#03a89e;font-weight:bold}.user-expert{color:#0000ff;font-weight:bold}.user-candidate-master{color:#aa00aa;font-weight:bold}.user-master{color:#ff8c00;font-weight:bold}.user-grandmaster,.user-legendary{color:#ff0000;font-weight:bold}.delta-pos{color:#008000}.delta-neg{color:#888}.delta-zero{color:#ccc}.rank-badge{background:#666;color:#fff;border-radius:3px;padding:1px 3px;font-size:10px}.team-tag{color:#007bff;font-size:10px}.inactive-row{color:#999}.contest-strength{font-size:10px;color:#777}.gold-crown-column{background:#fff8df}</style>`;
     const fullHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8">${style}</head><body>${table.outerHTML}</body></html>`;
     const blob = new Blob([fullHtml], {type:'application/vnd.ms-excel'});
     const link = document.createElement('a');
