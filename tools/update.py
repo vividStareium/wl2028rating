@@ -27,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA = ROOT / "data" / "ratings.csv"
 RESULT_RE = re.compile(r"^(?:-1|0|[1-9]\d*(?:[-_:].+)?)$")
+RANK_TEAM_RE = re.compile(r"^(?P<rank>[1-9]\d*)(?:[-_:](?P<team>.+))?$")
 HEADER_NAMES = {"姓名", "选手", "id", "ID", "name", "username"}
 
 
@@ -142,6 +143,23 @@ def apply_update(rows: list[list[str]], contest: str, results: dict[str, str]) -
     return updated, new_users
 
 
+def result_team_key(username: str, value: str) -> str | None:
+    """Return a stable team key for one positive ranking result."""
+    match = RANK_TEAM_RE.fullmatch(value)
+    if not match:
+        return None
+    team = (match.group("team") or "").strip()
+    return f"team:{team}" if team else f"solo:{username}"
+
+
+def count_teams(results: dict[str, str]) -> int:
+    return len({
+        team_key
+        for username, value in results.items()
+        if (team_key := result_team_key(username, value)) is not None
+    })
+
+
 def write_table(path: Path, rows: list[list[str]], backup: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if backup and path.exists():
@@ -167,10 +185,12 @@ def main() -> int:
 
         updated, new_users = apply_update(rows, args.contest, results)
         participants = sum(1 for value in results.values() if value not in {"-1", "0"})
+        teams = count_teams(results)
         winners = [name for name, value in results.items() if re.match(r"^1(?:[-_:]|$)", value)]
 
         print(f"比赛: {args.contest}")
-        print(f"参赛记录: {participants} 人")
+        print(f"参赛人数: {participants} 人")
+        print(f"参赛队伍数: {teams} 支")
         print(f"新选手: {len(new_users)} 人" + (f" ({', '.join(new_users)})" if new_users else ""))
         print(f"冠军: {', '.join(winners) if winners else '未检测到'}")
         print(f"更新后: {len(updated) - 1} 名选手 / {len(updated[0]) - 1} 场比赛")
