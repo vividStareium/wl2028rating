@@ -43,9 +43,16 @@ th { background:var(--header-bg); font-weight:600; position:sticky; top:0; z-ind
 .inactive-row td { background:#fcfcfc; }
 .achievement-badge { display:inline-flex; align-items:center; justify-content:center; margin-left:5px; vertical-align:1px; font-size:15px; line-height:1; }
 .achievement-badge.silver-crown { filter:grayscale(1); opacity:.72; }
+.contest-header { padding:7px 8px; min-width:82px; }
+.contest-header-main { display:flex; align-items:center; justify-content:center; gap:3px; line-height:1.2; }
+.contest-strength { margin-top:3px; color:#8a94a3; font-size:11px; font-weight:500; line-height:1.15; }
+.contest-crown { font-size:14px; line-height:1; filter:saturate(.95); }
+#rating-table-data th.gold-crown-column { background:#fff8df; box-shadow:inset 0 3px 0 rgba(202,151,0,.7); }
+#rating-table-data td.gold-crown-column { background:#fffdf5; }
+#rating-table-data .inactive-row td.gold-crown-column { background:#fffdf8; }
 .medal-rules { color:#667085; font-size:13px; line-height:1.7; margin-top:8px; }
 .medal-count { font-variant-numeric:tabular-nums; font-weight:700; }
 .medal-name { text-align:left; }
 .loading { text-align:center; padding:20px; color:#667085; }
 .load-error { margin-bottom:16px; padding:12px 14px; border:1px solid #f1aeb5; background:#fff5f5; color:#842029; border-radius:6px; line-height:1.6; }
-@media (max-width:720px) { body{padding:10px}.card{padding:14px}.table-card{padding:0}.header-row{align-items:flex-start}.chart-container{height:300px} }
+@media (max-width:720px) { body{padding:10px}.card{padding:14px}.table-card{padding:0}.header-row{align-items:flex-start}.chart-container{height:300px}.contest-header{min-width:78px;padding:6px}.contest-strength{font-size:10px} }
