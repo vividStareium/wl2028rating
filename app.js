@@ -12,16 +12,20 @@ const CONFIG = {
 
 class RatingCalculator {
     static getEloWinProbability(ra, rb) { return 1.0 / (1 + Math.pow(10, (rb - ra) / 400.0)); }
-    static getSeed(entities, rating) {
+    static getSeed(entities, rating, excludedTeam) {
         let result = 1;
-        for (const other of entities) result += this.getEloWinProbability(other.rating, rating);
+        for (const other of entities) {
+            // 反推目标 Rating 时只计算其他队伍；不能把自己的赛前队伍算作对手。
+            if (other === excludedTeam) continue;
+            result += this.getEloWinProbability(other.rating, rating);
+        }
         return result;
     }
-    static getRatingToRank(entities, rank) {
+    static getRatingToRank(entities, rank, excludedTeam) {
         let left = 1, right = 8000;
         while (right - left > 1) {
             const mid = Math.floor((left + right) / 2);
-            if (this.getSeed(entities, mid) < rank) right = mid; else left = mid;
+            if (this.getSeed(entities, mid, excludedTeam) < rank) right = mid; else left = mid;
         }
         return left;
     }
@@ -58,7 +62,7 @@ class RatingCalculator {
         }
         for (const t of teams) {
             const midRank = Math.sqrt(t.rank * t.seed);
-            t.needRating = this.getRatingToRank(teams, midRank);
+            t.needRating = this.getRatingToRank(teams, midRank, t);
             t.delta = Math.floor((t.needRating - t.rating) / 2);
         }
         teams.sort((a,b) => b.rating - a.rating);
